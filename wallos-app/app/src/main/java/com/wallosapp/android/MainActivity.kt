@@ -101,42 +101,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Sleek Custom Theme utilizing White primary and Lime Green accent
 @Composable
 fun WallosTheme(
     darkTheme: Boolean,
     content: @Composable () -> Unit
 ) {
-    val limeGreen = Color(0xFF84CC16)
-    val white = Color(0xFFFFFFFF)
-    val darkGrey = Color(0xFF1E1E1E)
-    val black = Color(0xFF121212)
-    val lightGrey = Color(0xFFF3F4F6)
-
     val colorScheme = if (darkTheme) {
-        darkColorScheme(
-            primary = white,
-            secondary = limeGreen,
-            tertiary = limeGreen,
-            background = black,
-            surface = darkGrey,
-            onPrimary = black,
-            onSecondary = black,
-            onBackground = white,
-            onSurface = white
-        )
+        MinimalistDarkColorScheme
     } else {
-        lightColorScheme(
-            primary = white,
-            secondary = limeGreen,
-            tertiary = limeGreen,
-            background = lightGrey,
-            surface = white,
-            onPrimary = black,
-            onSecondary = white,
-            onBackground = black,
-            onSurface = black
-        )
+        MinimalistLightColorScheme
     }
 
     MaterialTheme(
