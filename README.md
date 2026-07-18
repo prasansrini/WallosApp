@@ -38,6 +38,99 @@ The native Android application is built with Kotlin and Jetpack Compose.
 * **Theme Configuration**: Persistent app theme picker (Light, Dark, System) saved in DataStore.
 * **Local Offline Storage**: Architecture prepared with Room / SQLite database dependencies.
 
+### 💻 Code Highlights (`MainActivity.kt`)
+
+Key layout structure and theme definitions are located in [MainActivity.kt](file:///C:/Users/Phoex/StudioProjects/WallosApp/wallos-app/app/src/main/java/com/wallosapp/android/MainActivity.kt).
+
+#### Theme Definition (White & Lime Green)
+```kotlin
+@Composable
+fun WallosTheme(
+    darkTheme: Boolean,
+    content: @Composable () -> Unit
+) {
+    val limeGreen = Color(0xFF84CC16)
+    val white = Color(0xFFFFFFFF)
+    val darkGrey = Color(0xFF1E1E1E)
+    val black = Color(0xFF121212)
+    val lightGrey = Color(0xFFF3F4F6)
+
+    val colorScheme = if (darkTheme) {
+        darkColorScheme(
+            primary = white,
+            secondary = limeGreen,
+            tertiary = limeGreen,
+            background = black,
+            surface = darkGrey,
+            onPrimary = black,
+            onSecondary = black,
+            onBackground = white,
+            onSurface = white
+        )
+    } else {
+        lightColorScheme(
+            primary = white,
+            secondary = limeGreen,
+            tertiary = limeGreen,
+            background = lightGrey,
+            surface = white,
+            onPrimary = black,
+            onSecondary = white,
+            onBackground = black,
+            onSurface = black
+        )
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = Typography(),
+        content = content
+    )
+}
+```
+
+#### Side Navigation Drawer Layout
+```kotlin
+@Composable
+fun MainShell(
+    serverUrl: String,
+    currentScreen: AppScreen,
+    themeConfig: ThemeConfig,
+    onScreenChange: (AppScreen) -> Unit,
+    onSaveTheme: (ThemeConfig) -> Unit,
+    onResetServer: () -> Unit
+) {
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                // Navigation items: Home, Subscriptions, Statistics, Profile, Settings
+                DrawerItem(label = "Home", icon = Icons.Default.Home, selected = currentScreen == AppScreen.Dashboard) { ... }
+                // ...
+            }
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(currentScreen.name) },
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu")
+                        }
+                    }
+                )
+            }
+        ) { paddingValues ->
+            // Screen switching: DashboardScreen, SubscriptionsScreen, etc.
+        }
+    }
+}
+```
+
 ---
 
 ## 🛠️ Build Instructions (Gradle)
