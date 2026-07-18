@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.sp
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -40,8 +42,19 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 enum class ThemeConfig { LIGHT, DARK, SYSTEM }
 enum class AppScreen { Dashboard, Subscriptions, Statistics, Profile, Settings }
 
+data class Subscription(
+    val id: String = "",
+    val name: String,
+    val price: Double,
+    val currency: String = "$",
+    val cycle: String,
+    val category: String,
+    val date: String
+)
+
 class MainActivity : ComponentActivity() {
     private val serverUrlKey = stringPreferencesKey("server_url")
+    private val apiKeyKey = stringPreferencesKey("api_key")
     private val themeKey = stringPreferencesKey("theme_config")
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +65,7 @@ class MainActivity : ComponentActivity() {
 
             // Observe states from DataStore
             val serverUrlState = context.dataStore.data.map { it[serverUrlKey] ?: "" }.collectAsState(initial = "")
+            val apiKeyState = context.dataStore.data.map { it[apiKeyKey] ?: "" }.collectAsState(initial = "")
             val themeState = context.dataStore.data.map { it[themeKey] ?: ThemeConfig.SYSTEM.name }.collectAsState(initial = ThemeConfig.SYSTEM.name)
 
             // Local navigation state
@@ -64,24 +78,99 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
+            val serverUrl = serverUrlState.value
+            val apiKey = apiKeyState.value
+
+            // API state management
+            var subsList by remember { mutableStateOf(listOf<Subscription>()) }
+            var isLoading by remember { mutableStateOf(false) }
+            var syncError by remember { mutableStateOf<String?>(null) }
+            val refreshTrigger = remember { mutableStateOf(0) }
+
+            LaunchedEffect(serverUrl, apiKey, refreshTrigger.value) {
+                if (serverUrl.isNotEmpty() && apiKey.isNotEmpty()) {
+                    isLoading = true
+                    try {
+                        val apiSubs = WallosClient.getService(serverUrl).getSubscriptions(apiKey)
+                        subsList = apiSubs.map {
+                            Subscription(
+                                id = it.id?.toString() ?: "",
+                                name = it.name,
+                                price = it.price,
+                                currency = it.currency,
+                                cycle = it.cycle,
+                                category = it.category,
+                                date = it.date
+                            )
+                        }
+                        syncError = null
+                    } catch (e: Exception) {
+                        syncError = e.localizedMessage
+                    } finally {
+                        isLoading = false
+                    }
+                }
+            }
+
+            val onAddSub: (Subscription) -> Unit = { newSub ->
+                scope.launch {
+                    try {
+                        WallosClient.getService(serverUrl).createSubscription(
+                            apiKey = apiKey,
+                            subscription = ApiSubscription(
+                                name = newSub.name,
+                                price = newSub.price,
+                                currency = newSub.currency,
+                                cycle = newSub.cycle,
+                                category = newSub.category,
+                                date = newSub.date
+                            )
+                        )
+                        refreshTrigger.value += 1
+                    } catch (e: Exception) {
+                        syncError = "Create failed: ${e.message}"
+                    }
+                }
+            }
+
+            val onDeleteSub: (Subscription) -> Unit = { sub ->
+                scope.launch {
+                    val idInt = sub.id.toIntOrNull()
+                    if (idInt != null) {
+                        try {
+                            WallosClient.getService(serverUrl).deleteSubscription(apiKey, idInt)
+                            refreshTrigger.value += 1
+                        } catch (e: Exception) {
+                            syncError = "Delete failed: ${e.message}"
+                        }
+                    }
+                }
+            }
+
             WallosTheme(darkTheme = darkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    if (serverUrlState.value.isEmpty()) {
+                    if (serverUrl.isEmpty() || apiKey.isEmpty()) {
                         ServerConfigScreen(
-                            onSaveUrl = { url ->
+                            onSaveConfig = { url, key ->
                                 scope.launch {
-                                    context.dataStore.edit { it[serverUrlKey] = url }
+                                    context.dataStore.edit {
+                                        it[serverUrlKey] = url
+                                        it[apiKeyKey] = key
+                                    }
                                 }
                             }
                         )
                     } else {
                         MainShell(
-                            serverUrl = serverUrlState.value,
+                            serverUrl = serverUrl,
                             currentScreen = currentScreen,
                             themeConfig = ThemeConfig.valueOf(themeState.value),
+                            subsList = subsList,
+                            isLoading = isLoading,
+                            syncError = syncError,
                             onScreenChange = { currentScreen = it },
                             onSaveTheme = { theme ->
                                 scope.launch {
@@ -90,9 +179,14 @@ class MainActivity : ComponentActivity() {
                             },
                             onResetServer = {
                                 scope.launch {
-                                    context.dataStore.edit { it[serverUrlKey] = "" }
+                                    context.dataStore.edit {
+                                        it[serverUrlKey] = ""
+                                        it[apiKeyKey] = ""
+                                    }
                                 }
-                            }
+                            },
+                            onAddSubscription = onAddSub,
+                            onDeleteSubscription = onDeleteSub
                         )
                     }
                 }
@@ -121,8 +215,9 @@ fun WallosTheme(
 
 // Dynamic Server URL Entry Screen
 @Composable
-fun ServerConfigScreen(onSaveUrl: (String) -> Unit) {
+fun ServerConfigScreen(onSaveConfig: (String, String) -> Unit) {
     var urlText by remember { mutableStateOf(TextFieldValue("http://")) }
+    var apiKeyText by remember { mutableStateOf(TextFieldValue("")) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
     Column(
@@ -147,7 +242,7 @@ fun ServerConfigScreen(onSaveUrl: (String) -> Unit) {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Enter your self-hosted Wallos server instance URL",
+            text = "Enter your self-hosted Wallos URL & API Key",
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
         )
@@ -157,6 +252,18 @@ fun ServerConfigScreen(onSaveUrl: (String) -> Unit) {
             value = urlText,
             onValueChange = { urlText = it },
             label = { Text("Server URL") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.secondary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+            )
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedTextField(
+            value = apiKeyText,
+            onValueChange = { apiKeyText = it },
+            label = { Text("API Key") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             colors = OutlinedTextFieldDefaults.colors(
@@ -174,10 +281,13 @@ fun ServerConfigScreen(onSaveUrl: (String) -> Unit) {
         Button(
             onClick = {
                 val url = urlText.text.trim()
-                if (url.startsWith("http://") || url.startsWith("https://")) {
-                    onSaveUrl(url)
-                } else {
+                val key = apiKeyText.text.trim()
+                if (!url.startsWith("http://") && !url.startsWith("https://")) {
                     errorMsg = "URL must start with http:// or https://"
+                } else if (key.isEmpty()) {
+                    errorMsg = "API Key cannot be empty"
+                } else {
+                    onSaveConfig(url, key)
                 }
             },
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
@@ -195,9 +305,14 @@ fun MainShell(
     serverUrl: String,
     currentScreen: AppScreen,
     themeConfig: ThemeConfig,
+    subsList: List<Subscription>,
+    isLoading: Boolean,
+    syncError: String?,
     onScreenChange: (AppScreen) -> Unit,
     onSaveTheme: (ThemeConfig) -> Unit,
-    onResetServer: () -> Unit
+    onResetServer: () -> Unit,
+    onAddSubscription: (Subscription) -> Unit,
+    onDeleteSubscription: (Subscription) -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -290,12 +405,38 @@ fun MainShell(
                     .padding(paddingValues)
                     .background(MaterialTheme.colorScheme.background)
             ) {
-                when (currentScreen) {
-                    AppScreen.Dashboard -> DashboardScreen()
-                    AppScreen.Subscriptions -> SubscriptionsScreen()
-                    AppScreen.Statistics -> StatisticsScreen()
-                    AppScreen.Profile -> ProfileScreen(serverUrl)
-                    AppScreen.Settings -> SettingsScreen(themeConfig, onSaveTheme, onResetServer)
+                if (isLoading && subsList.isEmpty()) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center),
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                } else {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        syncError?.let {
+                            Text(
+                                text = it,
+                                color = Color.Red,
+                                fontSize = 12.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color.Red.copy(alpha = 0.1f))
+                                    .padding(8.dp)
+                            )
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
+                            when (currentScreen) {
+                                AppScreen.Dashboard -> DashboardScreen(subsList)
+                                AppScreen.Subscriptions -> SubscriptionsScreen(
+                                    subsList = subsList,
+                                    onAddSubscription = onAddSubscription,
+                                    onDeleteSubscription = onDeleteSubscription
+                                )
+                                AppScreen.Statistics -> StatisticsScreen()
+                                AppScreen.Profile -> ProfileScreen(serverUrl)
+                                AppScreen.Settings -> SettingsScreen(themeConfig, onSaveTheme, onResetServer)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -329,7 +470,15 @@ fun DrawerItem(
 
 // 1. Dashboard Screen
 @Composable
-fun DashboardScreen() {
+fun DashboardScreen(subsList: List<Subscription>) {
+    val monthlyTotal = subsList.sumOf { sub ->
+        when (sub.cycle.lowercase()) {
+            "yearly" -> sub.price / 12.0
+            "weekly" -> sub.price * 4.33
+            else -> sub.price
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -338,16 +487,22 @@ fun DashboardScreen() {
         Text("Overview", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
         Spacer(modifier = Modifier.height(12.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
-            DashboardCard(title = "Monthly Spent", value = "$124.50", modifier = Modifier.weight(1f))
+            DashboardCard(title = "Monthly Spent", value = "$${String.format("%.2f", monthlyTotal)}", modifier = Modifier.weight(1f))
             Spacer(modifier = Modifier.width(12.dp))
-            DashboardCard(title = "Active Subs", value = "8", modifier = Modifier.weight(1f))
+            DashboardCard(title = "Active Subs", value = "${subsList.size}", modifier = Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(20.dp))
         Text("Upcoming Bills", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
         Spacer(modifier = Modifier.height(12.dp))
-        UpcomingBillItem("Netflix", "$15.49", "In 2 days")
-        UpcomingBillItem("Spotify", "$10.99", "In 5 days")
-        UpcomingBillItem("Google One", "$1.99", "In 12 days")
+        if (subsList.isEmpty()) {
+            Text("No active bills", fontSize = 14.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f))
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(subsList.take(3)) { sub ->
+                    UpcomingBillItem(sub.name, "${sub.currency}${String.format("%.2f", sub.price)}", "Due: ${sub.date}")
+                }
+            }
+        }
     }
 }
 
@@ -387,65 +542,224 @@ fun UpcomingBillItem(name: String, cost: String, days: String) {
 
 // 2. Subscriptions Screen with SQLite Caching UI
 @Composable
-fun SubscriptionsScreen() {
-    var subsList by remember { mutableStateOf(listOf("Netflix", "Spotify", "Amazon Prime", "Github Copilot", "Internet")) }
-    var newSubName by remember { mutableStateOf("") }
+fun SubscriptionsScreen(
+    subsList: List<Subscription>,
+    onAddSubscription: (Subscription) -> Unit,
+    onDeleteSubscription: (Subscription) -> Unit
+) {
+    var showCreateDialog by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
         ) {
-            OutlinedTextField(
-                value = newSubName,
-                onValueChange = { newSubName = it },
-                label = { Text("New Subscription") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.secondary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
-                )
+            Text(
+                "Your Subscriptions",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
             )
-            Spacer(modifier = Modifier.width(12.dp))
-            Button(
-                onClick = {
-                    if (newSubName.isNotBlank()) {
-                        subsList = subsList + newSubName.trim()
-                        newSubName = ""
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-            ) {
-                Text("+", color = Color.Black, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            }
-        }
+            Spacer(modifier = Modifier.height(12.dp))
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(subsList) { sub ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            if (subsList.isEmpty()) {
+                Text(
+                    "No subscriptions found. Click + to add.",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
-                    Text(sub, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    IconButton(onClick = { subsList = subsList.filter { it != sub } }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.8f))
+                    items(subsList) { sub ->
+                        SubscriptionItem(
+                            sub = sub,
+                            onDelete = { onDeleteSubscription(sub) }
+                        )
                     }
                 }
             }
         }
+
+        FloatingActionButton(
+            onClick = { showCreateDialog = true },
+            containerColor = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(24.dp)
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "Add Subscription", tint = Color.Black)
+        }
+
+        if (showCreateDialog) {
+            CreateSubscriptionDialog(
+                onDismiss = { showCreateDialog = false },
+                onConfirm = { newSub ->
+                    onAddSubscription(newSub)
+                    showCreateDialog = false
+                }
+            )
+        }
     }
+}
+
+@Composable
+fun SubscriptionItem(
+    sub: Subscription,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(sub.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${sub.category} • ${sub.cycle}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                "Next bill: ${sub.date}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${sub.currency}${String.format("%.2f", sub.price)}",
+                fontWeight = FontWeight.Black,
+                fontSize = 16.sp,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.8f))
+            }
+        }
+    }
+}
+
+@Composable
+fun CreateSubscriptionDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (Subscription) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("") }
+    var cycle by remember { mutableStateOf("Monthly") }
+    var category by remember { mutableStateOf("Entertainment") }
+    var date by remember { mutableStateOf("") }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New Subscription", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = price,
+                    onValueChange = { price = it },
+                    label = { Text("Price") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Billing Cycle", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    listOf("Weekly", "Monthly", "Yearly").forEach { item ->
+                        val selected = cycle == item
+                        Button(
+                            onClick = { cycle = item },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface
+                            ),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(2.dp)
+                        ) {
+                            Text(
+                                item,
+                                color = if (selected) Color.Black else MaterialTheme.colorScheme.onSurface,
+                                fontSize = 12.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = category,
+                    onValueChange = { category = it },
+                    label = { Text("Category") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = date,
+                    onValueChange = { date = it },
+                    label = { Text("Next Payment Date (YYYY-MM-DD)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                errorMsg?.let {
+                    Text(it, color = Color.Red, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val p = price.toDoubleOrNull()
+                    if (name.isBlank()) {
+                        errorMsg = "Name cannot be empty"
+                    } else if (p == null || p <= 0) {
+                        errorMsg = "Enter a valid positive price"
+                    } else {
+                        onConfirm(
+                            Subscription(
+                                name = name.trim(),
+                                price = p,
+                                cycle = cycle,
+                                category = category.trim(),
+                                date = date.trim().ifEmpty { "2026-08-01" }
+                            )
+                        )
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
+                Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = MaterialTheme.colorScheme.onSurface)
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
+    )
 }
 
 // 3. Statistics Screen (Placeholder Chart Layout)
