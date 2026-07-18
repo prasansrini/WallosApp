@@ -12,13 +12,82 @@ Wallos is a powerful, self-hosted personal subscription and expense tracker. Sin
 WallosApp/
 ├── wallos-server/                     # Server deployment directory
 │   └── docker-compose.yaml            # Docker compose configuration for Wallos
+├── wallos-app/                        # Native Android codebase
+│   ├── app/                           # Android application module
+│   ├── gradle/                        # Gradle wrapper and version catalog
+│   ├── build.gradle.kts               # Root build script
+│   └── settings.gradle.kts            # Project settings
+├── wallos_app_dev_plan.md             # Native Android developer roadmap
 ├── wallos_full_deployment_dev_plan.md # Comprehensive roadmap & app dev plan
 └── README.md                          # This documentation file
 ```
 
 ---
 
-## 🚀 Part 1: Wallos Server Deployment
+## 📱 Part 1: Native Android Application (`wallos-app`)
+
+The native Android application is built with Kotlin and Jetpack Compose.
+
+### Theme & Styling
+* **Primary Color**: White (`#FFFFFF`)
+* **Accent Color**: Lime Green (`#84CC16`)
+
+### Features Implemented
+* **Server URL Setup**: Input and validate self-hosted instance URL, persisted via DataStore.
+* **Side Drawer Menu**: Swipe from left navigation drawer containing Home, Subscriptions, Statistics, Profile, and Settings.
+* **Theme Configuration**: Persistent app theme picker (Light, Dark, System) saved in DataStore.
+* **Local Offline Storage**: Architecture prepared with Room / SQLite database dependencies.
+
+---
+
+## 🛠️ Build Instructions (Gradle)
+
+To build the Android application locally, navigate to the `wallos-app` directory and use the Gradle wrapper:
+
+### Prerequisites
+* Java JDK 21+ installed and `JAVA_HOME` environment variable configured.
+* Android SDK command line tools or Android Studio installed.
+
+### Build Commands
+1. Navigate to the app directory:
+   ```bash
+   cd wallos-app
+   ```
+2. Build the debug APK:
+   * **Windows (cmd/powershell)**:
+     ```powershell
+     .\gradlew assembleDebug
+     ```
+   * **Linux/macOS**:
+     ```bash
+     chmod +x gradlew
+     ./gradlew assembleDebug
+     ```
+3. Run Unit Tests:
+   * **Windows**:
+     ```powershell
+     .\gradlew testDebugUnitTest
+     ```
+   * **Linux/macOS**:
+     ```bash
+     ./gradlew testDebugUnitTest
+     ```
+4. Clean build outputs:
+   * **Windows**:
+     ```powershell
+     .\gradlew clean
+     ```
+   * **Linux/macOS**:
+     ```bash
+     ./gradlew clean
+     ```
+
+The built APK will be located at:
+`wallos-app/app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## 🚀 Part 2: Wallos Server Deployment
 
 The Wallos server runs in a Docker container using Docker Compose.
 
@@ -36,25 +105,6 @@ The Wallos server runs in a Docker container using Docker Compose.
    * URL: [http://localhost:8282](http://localhost:8282)
 
 ### Persistent Volumes
-Data is stored locally on the host machine to ensure persistence across container updates:
+Data is stored locally on the host machine to ensure persistence:
 * `wallos-server/db/` - Contains the SQLite database (`wallos.db`)
 * `wallos-server/logos/` - Stores uploaded subscription logo images
-
-*(Note: These local data directories are ignored by Git in `.gitignore` to protect sensitive information).*
-
----
-
-## 📱 Part 2: Native Android Application Roadmap
-
-The companion Android application will be built as a native client interfacing with the Wallos REST API. 
-
-### Tech Stack & Architecture
-* **Language**: Kotlin
-* **UI Framework**: Jetpack Compose (Material Design 3)
-* **Architecture**: MVVM (Model-View-ViewModel) with Clean Architecture principles
-* **Networking**: Retrofit2 & OkHttp
-* **Local Cache & Offline Mode**: Room DB
-* **Dependency Injection**: Dagger Hilt
-* **Secure Storage**: EncryptedSharedPreferences (for API Key storage)
-
-For detailed information on design patterns, module structure, and testing, see the full developer plan: [wallos_full_deployment_dev_plan.md](wallos_full_deployment_dev_plan.md).
