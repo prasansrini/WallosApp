@@ -40,3 +40,7 @@ wallos-server/logos/
 
 # Local agent configurations and skills
 .agents/
+
+# Dev plans
+wallos_app_dev_plan.md
+wallos_full_deployment_dev_plan.md
