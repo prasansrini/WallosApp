@@ -32,3 +32,8 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Wallos local data and databases
+*.db
+wallos-server/db/
+wallos-server/logos/
